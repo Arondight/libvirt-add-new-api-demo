@@ -2,7 +2,9 @@
 
 ## ABOUT
 
-This patch is an example to add new APIs in [LibVirt][LIBVIRT-WEBSITE], also add entries in virsh. I implement qemu driver only but others is the same.
+This patch is an example to add new APIs in [LibVirt][LIBVIRT-WEBSITE], also add entries in `virsh`. I implement qemu driver only but others is the same.
+
+[LIBVIRT-WEBSITE]: http://libvirt.org "Visit website of LibVirt"
 
 ## USAGE
 
