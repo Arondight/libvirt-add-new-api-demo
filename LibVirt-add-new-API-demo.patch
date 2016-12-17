@@ -1,0 +1,781 @@
+From b5c16ee87ffe63c55655872ab9c5f5c26d415be3 Mon Sep 17 00:00:00 2001
+From: Arondight <shell_way@foxmail.com>
+Date: Sun, 18 Dec 2016 01:26:30 +0800
+Subject: [PATCH] LibVirt add new API demo
+
+This patch is an example to add new APIs in LibVirt, also add entries in
+virsh. I implement qemu driver only but others is the same.
+
+* include/libvirt/libvirt-host.h (virConnectGetMagicFileContent)
+(virConnectSetMagicFileContent, virConnectGetMagicFileStatus):
+Declarations of public APIs.
+* src/libvirt_public.syms: (virConnectGetMagicFileContent)
+(virConnectSetMagicFileContent, virConnectGetMagicFileStatus):
+New global symbols.
+* src/driver-hypervisor.h (virDrvConnectGetMagicFileContent)
+(virDrvConnectSetMagicFileContent, virDrvConnectGetMagicFileStatus):
+Typedefs for internal driver APIs.
+(connectGetMagicFileContent, connectSetMagicFileContent)
+(connectGetMagicFileStatus): Callbacks.
+* src/libvirt-host.c (virConnectGetMagicFileContent)
+(virConnectSetMagicFileContent, virConnectGetMagicFileStatus):
+Implications of public APIs.
+* src/remote/remote_driver.c (remoteConnectGetMagicFileContent)
+(remoteConnectSetMagicFileContent, remoteConnectGetMagicFileStatus):
+Client side serialization.
+* src/remote/remote_protocol.x
+(remote_connect_get_magic_file_content_ret)
+(remote_connect_set_magic_file_content_args)
+(remote_connect_set_magic_file_content_ret)
+(remote_connect_get_magic_file_status_ret)
+(REMOTE_PROC_CONNECT_GET_MAGIC_FILE_CONTENT)
+(REMOTE_PROC_CONNECT_SET_MAGIC_FILE_CONTENT)
+(REMOTE_PROC_CONNECT_GET_MAGIC_FILE_STATUS): Wire format.
+* src/remote_protocol-structs: Wire format.
+* src/qemu/qemu_driver.c (qemuConnectGetMagicFileContent)
+(qemuConnectSetMagicFileContent, qemuConnectGetMagicFileStatus):
+Implications of qemu driver APIs.
+* src/qemu/qemu_capabilities.h (virQEMUCapsGetMagicFileContent)
+(virQEMUCapsSetMagicFileContent, virQEMUCapsGetMagicFileStatus):
+Declarations of public API for qemu driver.
+* src/qemu/qemu_capabilities.c (virQEMUCapsGetMagicFileContent)
+(virQEMUCapsSetMagicFileContent, virQEMUCapsGetMagicFileStatus):
+Implications of public API for qemu driver.
+* src/qemu/qemu_process.c (qemuProcessStart): Stop VM start.
+* tools/virsh-host.c (cmdGetMagic, cmdSetMagic, cmdMagicStatus):
+Entries for virsh.
+(hostAndHypervisorCmds): New commands for virsh.
+* tools/virsh.pod (get-magic, set-magic, magic-statu):
+Documents for new commands.
+---
+ include/libvirt/libvirt-host.h |  32 ++++++++++
+ src/driver-hypervisor.h        |  12 ++++
+ src/libvirt-host.c             | 103 ++++++++++++++++++++++++++++++++
+ src/libvirt_public.syms        |   7 +++
+ src/qemu/qemu_capabilities.c   |  92 +++++++++++++++++++++++++++++
+ src/qemu/qemu_capabilities.h   |   6 ++
+ src/qemu/qemu_driver.c         |  66 +++++++++++++++++++++
+ src/qemu/qemu_process.c        |  17 ++++++
+ src/remote/remote_driver.c     |   3 +
+ src/remote/remote_protocol.x   |  38 +++++++++++-
+ src/remote_protocol-structs    |  15 +++++
+ tools/virsh-host.c             | 130 +++++++++++++++++++++++++++++++++++++++++
+ tools/virsh.pod                |  12 ++++
+ 13 files changed, 532 insertions(+), 1 deletion(-)
+
+diff --git a/include/libvirt/libvirt-host.h b/include/libvirt/libvirt-host.h
+index 07b5d1594..683fec5d5 100644
+--- a/include/libvirt/libvirt-host.h
++++ b/include/libvirt/libvirt-host.h
+@@ -686,5 +686,37 @@ int virNodeAllocPages(virConnectPtr conn,
+                       unsigned int cellCount,
+                       unsigned int flags);
+ 
++/**
++ * VIR_CONNECT_MAGIC_FILE_PATH:
++ *
++ * This is the absolute path of file.
++ */
++#define VIR_CONNECT_MAGIC_FILE_PATH ("/var/run/libvirt/magic_file")
++
++/**
++ * VIR_CONNECT_MAGIC_FILE_FORBIDDEN_STR:
++ *
++ * If file's content match this, qemu driver will refused to boot VM
++ */
++#define VIR_CONNECT_MAGIC_FILE_FORBIDDEN_STR ("0xabadcafe")
++
++/**
++ * VIR_CONNECT_MAGIC_FILE_CONTENT_LEN:
++ *
++ * Max length of file.
++ */
++#define VIR_CONNECT_MAGIC_FILE_CONTENT_LEN (32)
++
++/**
++ * virConnectMagicFileStatusFlags:
++ */
++typedef enum {
++    VIR_CONNECT_MAGIC_FILE_STATUS_UNREADABLE = 0,
++    VIR_CONNECt_MAGIC_FILE_STATUS_READABLE = 1,
++} virConnectMagicFileStatusFlags;
++
++char *virConnectGetMagicFileContent(virConnectPtr conn);
++int virConnectSetMagicFileContent(virConnectPtr conn, const char *content);
++int virConnectGetMagicFileStatus(virConnectPtr conn);
+ 
+ #endif /* __VIR_LIBVIRT_HOST_H__ */
+diff --git a/src/driver-hypervisor.h b/src/driver-hypervisor.h
+index 51af73200..3154b9c14 100644
+--- a/src/driver-hypervisor.h
++++ b/src/driver-hypervisor.h
+@@ -1251,6 +1251,15 @@ typedef int
+                              int state,
+                              unsigned int flags);
+ 
++typedef char *
++(*virDrvConnectGetMagicFileContent)(virConnectPtr conn);
++
++typedef int
++(*virDrvConnectSetMagicFileContent)(virConnectPtr conn, const char *content);
++
++typedef int
++(*virDrvConnectGetMagicFileStatus)(virConnectPtr conn);
++
+ typedef struct _virHypervisorDriver virHypervisorDriver;
+ typedef virHypervisorDriver *virHypervisorDriverPtr;
+ 
+@@ -1489,6 +1498,9 @@ struct _virHypervisorDriver {
+     virDrvDomainMigrateStartPostCopy domainMigrateStartPostCopy;
+     virDrvDomainGetGuestVcpus domainGetGuestVcpus;
+     virDrvDomainSetGuestVcpus domainSetGuestVcpus;
++    virDrvConnectGetMagicFileContent connectGetMagicFileContent;
++    virDrvConnectSetMagicFileContent connectSetMagicFileContent;
++    virDrvConnectGetMagicFileStatus connectGetMagicFileStatus;
+ };
+ 
+ 
+diff --git a/src/libvirt-host.c b/src/libvirt-host.c
+index 335798abf..2d716fd69 100644
+--- a/src/libvirt-host.c
++++ b/src/libvirt-host.c
+@@ -1482,3 +1482,106 @@ virNodeAllocPages(virConnectPtr conn,
+     virDispatchError(conn);
+     return -1;
+ }
++
++
++/**
++ * virConnectGetMagicFileContent:
++ *
++ * @conn: virConnect connection
++ *
++ * Get content of magic file, max length is VIR_CONNECT_MAGIC_FILE_CONTENT_LEN.
++ *
++ * Returns content of file if all succeed or NULL upon any failure.
++ */
++char *
++virConnectGetMagicFileContent(virConnectPtr conn)
++{
++    VIR_DEBUG("conn=%p", conn);
++
++    virResetLastError();
++
++    virCheckConnectReturn(conn, NULL);
++
++    if (conn->driver->connectGetMagicFileContent) {
++        char *ret = conn->driver->connectGetMagicFileContent(conn);
++        if (!ret)
++            goto error;
++        return ret;
++    }
++
++    virReportUnsupportedError();
++
++ error:
++    virDispatchError(conn);
++    return NULL;
++}
++
++
++/**
++ * virConnectSetMagicFileContent:
++ *
++ * @conn: virConnect connection
++ * @content: content to be stored file, accept
++ *           VIR_CONNECT_MAGIC_FILE_CONTENT_LEN charaters at most.
++ *
++ * Set content of magic file, max lenght is VIR_CONNECT_MAGIC_FILE_CONTENT_LEN.
++ *
++ * Returns 0 if all succeed, -1 upon any failure.
++ */
++int
++virConnectSetMagicFileContent(virConnectPtr conn, const char *content)
++{
++    VIR_DEBUG("conn=%p, content=%p", conn, content);
++
++    virResetLastError();
++
++    virCheckConnectReturn(conn, -1);
++    virCheckNonNullArgGoto(content, error);
++
++    if (conn->driver->connectSetMagicFileContent) {
++        int ret = conn->driver->connectSetMagicFileContent(conn, content);
++        if (ret < 0)
++            goto error;
++        return ret;
++    }
++
++    virReportUnsupportedError();
++
++ error:
++    virDispatchError(conn);
++    return -1;
++}
++
++
++/**
++ * virConnectGetMagicFileStatus:
++ *
++ * @conn: virConnect connection
++ *
++ * Get status of magic file.
++ *
++ * Returns VIR_CONNECT_MAGIC_FILE_STATUS_UNREADABLE if file unreadable,
++ *         VIR_CONNECt_MAGIC_FILE_STATUS_READABLE, -1 upon any failure.
++ */
++int
++virConnectGetMagicFileStatus(virConnectPtr conn)
++{
++    VIR_DEBUG("conn=%p", conn);
++
++    virResetLastError();
++
++    virCheckConnectReturn(conn, -1);
++
++    if (conn->driver->connectGetMagicFileStatus) {
++        int ret = conn->driver->connectGetMagicFileStatus(conn);
++        if (ret < 0)
++            goto error;
++        return ret;
++    }
++
++    virReportUnsupportedError();
++
++ error:
++    virDispatchError(conn);
++    return -1;
++}
+diff --git a/src/libvirt_public.syms b/src/libvirt_public.syms
+index e01604cad..38ace040f 100644
+--- a/src/libvirt_public.syms
++++ b/src/libvirt_public.syms
+@@ -746,4 +746,11 @@ LIBVIRT_2.2.0 {
+         virConnectNodeDeviceEventDeregisterAny;
+ } LIBVIRT_2.0.0;
+ 
++LIBVIRT_2.5.0 {
++    global:
++        virConnectGetMagicFileContent;
++        virConnectSetMagicFileContent;
++        virConnectGetMagicFileStatus;
++} LIBVIRT_2.2.0;
++
+ # .... define new API here using predicted next version number ....
+diff --git a/src/qemu/qemu_capabilities.c b/src/qemu/qemu_capabilities.c
+index 45ab5bbb6..7028a7700 100644
+--- a/src/qemu/qemu_capabilities.c
++++ b/src/qemu/qemu_capabilities.c
+@@ -5222,3 +5222,95 @@ virQEMUCapsFillDomainCaps(virCapsPtr caps,
+         return -1;
+     return 0;
+ }
++
++
++char *
++virQEMUCapsGetMagicFileContent(virCapsPtr caps ATTRIBUTE_UNUSED)
++{
++    FILE *fh = NULL;
++    char *content = NULL;
++    char *ret = NULL;
++
++    if (VIR_CONNECT_MAGIC_FILE_STATUS_UNREADABLE
++          == virQEMUCapsGetMagicFileStatus (caps)) {
++        return NULL;
++    }
++
++    if (!(fh = fopen(VIR_CONNECT_MAGIC_FILE_PATH, "r"))) {
++        virReportSystemError(errno, _("failed to open file %s"),
++                             VIR_CONNECT_MAGIC_FILE_PATH);
++        return NULL;
++    }
++
++    if (VIR_ALLOC_N(content, VIR_CONNECT_MAGIC_FILE_CONTENT_LEN) < 0) {
++        ret = NULL;
++        goto cleanup;
++    }
++
++    memset (content, 0, VIR_CONNECT_MAGIC_FILE_CONTENT_LEN);
++
++    if (!fgets(content, VIR_CONNECT_MAGIC_FILE_CONTENT_LEN, fh)) {
++        virReportSystemError(errno, _("failed to read file %s"),
++                             VIR_CONNECT_MAGIC_FILE_PATH);
++        ret = NULL;
++        goto cleanup;
++    }
++
++    ret = content;
++
++cleanup:
++    if (VIR_FCLOSE (fh) < 0) {
++        virReportSystemError(errno, _("failed to close file %d"), fileno (fh));
++    }
++
++    return ret;
++}
++
++
++int
++virQEMUCapsSetMagicFileContent(virCapsPtr caps ATTRIBUTE_UNUSED,
++                               const char *content)
++{
++    FILE *fh = NULL;
++    size_t content_len = 0;
++    int ret = -1;
++
++    if (!content) {
++        return -1;
++    }
++
++    if (!(fh = fopen(VIR_CONNECT_MAGIC_FILE_PATH, "w"))) {
++        virReportSystemError(errno, _("failed to open file %s"),
++                             VIR_CONNECT_MAGIC_FILE_PATH);
++        return -1;
++    }
++
++    if ((content_len = strlen (content)) > VIR_CONNECT_MAGIC_FILE_CONTENT_LEN) {
++        content_len = VIR_CONNECT_MAGIC_FILE_CONTENT_LEN;
++    }
++
++    if (content_len != fwrite(content, sizeof(char), content_len, fh)) {
++        ret = -1;
++        goto cleanup;
++    }
++
++    ret = 1;
++
++cleanup:
++    if (VIR_FCLOSE (fh) < 0) {
++        virReportSystemError(errno, _("failed to close file %d"), fileno (fh));
++    }
++
++    return ret;
++}
++
++
++int
++virQEMUCapsGetMagicFileStatus(virCapsPtr caps ATTRIBUTE_UNUSED)
++{
++    if (-1 == access(VIR_CONNECT_MAGIC_FILE_PATH, R_OK)) {
++        return VIR_CONNECT_MAGIC_FILE_STATUS_UNREADABLE;
++    }
++
++    return VIR_CONNECt_MAGIC_FILE_STATUS_READABLE;
++}
+diff --git a/src/qemu/qemu_capabilities.h b/src/qemu/qemu_capabilities.h
+index ee4bbb329..d9d1cbd73 100644
+--- a/src/qemu/qemu_capabilities.h
++++ b/src/qemu/qemu_capabilities.h
+@@ -525,4 +525,10 @@ int virQEMUCapsFillDomainCaps(virCapsPtr caps,
+                               virFirmwarePtr *firmwares,
+                               size_t nfirmwares);
+ 
++char *virQEMUCapsGetMagicFileContent(virCapsPtr caps);
++
++int virQEMUCapsSetMagicFileContent(virCapsPtr caps, const char *content);
++
++int virQEMUCapsGetMagicFileStatus(virCapsPtr caps);
++
+ #endif /* __QEMU_CAPABILITIES_H__*/
+diff --git a/src/qemu/qemu_driver.c b/src/qemu/qemu_driver.c
+index 3517aa2be..764e74d27 100644
+--- a/src/qemu/qemu_driver.c
++++ b/src/qemu/qemu_driver.c
+@@ -20273,6 +20273,69 @@ qemuDomainSetGuestVcpus(virDomainPtr dom,
+ }
+ 
+ 
++static char *
++qemuConnectGetMagicFileContent(virConnectPtr conn)
++{
++    virQEMUDriverPtr driver = conn->privateData;
++    char *ret = NULL;
++    virCapsPtr caps = NULL;
++
++    if (!(caps = virQEMUDriverGetCapabilities(driver, false))) {
++        goto cleanup;
++    }
++
++    if (!(ret = virQEMUCapsGetMagicFileContent(caps))) {
++        goto cleanup;
++    }
++
++ cleanup:
++    virObjectUnref(caps);
++    return ret;
++}
++
++
++static int
++qemuConnectSetMagicFileContent(virConnectPtr conn, const char *content)
++{
++    virQEMUDriverPtr driver = conn->privateData;
++    int ret = -1;
++    virCapsPtr caps = NULL;
++
++    if (!(caps = virQEMUDriverGetCapabilities(driver, false))) {
++        goto cleanup;
++    }
++
++    if (-1 == (ret = virQEMUCapsSetMagicFileContent(caps, content))) {
++        goto cleanup;
++    }
++
++ cleanup:
++    virObjectUnref(caps);
++    return ret;
++}
++
++
++static int
++qemuConnectGetMagicFileStatus(virConnectPtr conn)
++{
++    virQEMUDriverPtr driver = conn->privateData;
++    int ret = -1;
++    virCapsPtr caps = NULL;
++
++    if (!(caps = virQEMUDriverGetCapabilities(driver, false))) {
++        goto cleanup;
++    }
++
++    if (-1 == (ret = virQEMUCapsGetMagicFileStatus(caps))) {
++        goto cleanup;
++    }
++
++ cleanup:
++    virObjectUnref(caps);
++    return ret;
++}
++
++
+ static virHypervisorDriver qemuHypervisorDriver = {
+     .name = QEMU_DRIVER_NAME,
+     .connectOpen = qemuConnectOpen, /* 0.2.0 */
+@@ -20486,6 +20549,9 @@ static virHypervisorDriver qemuHypervisorDriver = {
+     .domainMigrateStartPostCopy = qemuDomainMigrateStartPostCopy, /* 1.3.3 */
+     .domainGetGuestVcpus = qemuDomainGetGuestVcpus, /* 2.0.0 */
+     .domainSetGuestVcpus = qemuDomainSetGuestVcpus, /* 2.0.0 */
++    .connectGetMagicFileContent = qemuConnectGetMagicFileContent, /* 2.5.0 */
++    .connectSetMagicFileContent = qemuConnectSetMagicFileContent, /* 2.5.0 */
++    .connectGetMagicFileStatus = qemuConnectGetMagicFileStatus, /* 2.5.0 */
+ };
+ 
+ 
+diff --git a/src/qemu/qemu_process.c b/src/qemu/qemu_process.c
+index 7f19c691e..2290c67fe 100644
+--- a/src/qemu/qemu_process.c
++++ b/src/qemu/qemu_process.c
+@@ -5718,10 +5718,12 @@ qemuProcessStart(virConnectPtr conn,
+                  virNetDevVPortProfileOp vmop,
+                  unsigned int flags)
+ {
++    virCapsPtr caps = NULL;
+     qemuDomainObjPrivatePtr priv = vm->privateData;
+     qemuProcessIncomingDefPtr incoming = NULL;
+     unsigned int stopFlags;
+     bool relabel = false;
++    char *magic = NULL;
+     int ret = -1;
+     int rv;
+ 
+@@ -5743,6 +5745,19 @@ qemuProcessStart(virConnectPtr conn,
+     if (qemuProcessInit(driver, vm, asyncJob, !!migrateFrom, flags) < 0)
+         goto cleanup;
+ 
++
++    if (!(caps = virQEMUDriverGetCapabilities(driver, false))) {
++        goto cleanup;
++    }
++
++    if (!(magic = virQEMUCapsGetMagicFileContent(caps))) {
++        goto cleanup;
++    }
++
++    if (STREQ(magic, VIR_CONNECT_MAGIC_FILE_FORBIDDEN_STR)) {
++        goto cleanup;
++    }
++
+     if (migrateFrom) {
+         incoming = qemuProcessIncomingDefNew(priv->qemuCaps, NULL, migrateFrom,
+                                              migrateFd, migratePath);
+@@ -5784,6 +5799,8 @@ qemuProcessStart(virConnectPtr conn,
+     ret = 0;
+ 
+  cleanup:
++    VIR_FREE(magic);
++    virObjectUnref(caps);
+     qemuProcessIncomingDefFree(incoming);
+     return ret;
+ 
+diff --git a/src/remote/remote_driver.c b/src/remote/remote_driver.c
+index 888052045..ff9c91b7f 100644
+--- a/src/remote/remote_driver.c
++++ b/src/remote/remote_driver.c
+@@ -8205,6 +8205,9 @@ static virHypervisorDriver hypervisor_driver = {
+     .domainMigrateStartPostCopy = remoteDomainMigrateStartPostCopy, /* 1.3.3 */
+     .domainGetGuestVcpus = remoteDomainGetGuestVcpus, /* 2.0.0 */
+     .domainSetGuestVcpus = remoteDomainSetGuestVcpus, /* 2.0.0 */
++    .connectGetMagicFileContent = remoteConnectGetMagicFileContent, /* 2.5.0 */
++    .connectSetMagicFileContent = remoteConnectSetMagicFileContent, /* 2.5.0 */
++    .connectGetMagicFileStatus = remoteConnectGetMagicFileStatus, /* 2.5.0 */
+ };
+ 
+ static virNetworkDriver network_driver = {
+diff --git a/src/remote/remote_protocol.x b/src/remote/remote_protocol.x
+index e8382dc51..47066d1b4 100644
+--- a/src/remote/remote_protocol.x
++++ b/src/remote/remote_protocol.x
+@@ -3341,6 +3341,21 @@ struct remote_domain_set_guest_vcpus_args {
+     unsigned int flags;
+ };
+ 
++struct remote_connect_get_magic_file_content_ret {
++    remote_nonnull_string content;
++};
++
++struct remote_connect_set_magic_file_content_args {
++    remote_nonnull_string content;
++};
++
++struct remote_connect_set_magic_file_content_ret {
++    int need_results;
++};
++
++struct remote_connect_get_magic_file_status_ret {
++    int status;
++};
+ 
+ /*----- Protocol. -----*/
+ 
+@@ -5934,5 +5949,26 @@ enum remote_procedure {
+      * @generate: both
+      * @acl: none
+      */
+-    REMOTE_PROC_NODE_DEVICE_EVENT_UPDATE = 377
++    REMOTE_PROC_NODE_DEVICE_EVENT_UPDATE = 377,
++
++    /**
++     * @generate: both
++     * @priority: high
++     * @acl: connect:read
++     */
++    REMOTE_PROC_CONNECT_GET_MAGIC_FILE_CONTENT = 378,
++
++    /**
++     * @generate: both
++     * @priority: high
++     * @acl: connect:write
++     */
++    REMOTE_PROC_CONNECT_SET_MAGIC_FILE_CONTENT = 379,
++
++    /**
++     * @generate: both
++     * @priority: high
++     * @acl: connect:read
++     */
++    REMOTE_PROC_CONNECT_GET_MAGIC_FILE_STATUS = 380
+ };
+diff --git a/src/remote_protocol-structs b/src/remote_protocol-structs
+index b71accc07..e4031a531 100644
+--- a/src/remote_protocol-structs
++++ b/src/remote_protocol-structs
+@@ -2791,6 +2791,18 @@ struct remote_domain_set_guest_vcpus_args {
+         int                        state;
+         u_int                      flags;
+ };
++struct remote_connect_get_magic_file_content_ret {
++    remote_nonnull_string content;
++};
++struct remote_connect_set_magic_file_content_args {
++    remote_nonnull_string content;
++};
++struct remote_connect_set_magic_file_content_ret {
++    int need_results;
++};
++struct remote_connect_get_magic_file_status_ret {
++    int status;
++};
+ enum remote_procedure {
+         REMOTE_PROC_CONNECT_OPEN = 1,
+         REMOTE_PROC_CONNECT_CLOSE = 2,
+@@ -3169,4 +3181,7 @@ enum remote_procedure {
+         REMOTE_PROC_CONNECT_NODE_DEVICE_EVENT_DEREGISTER_ANY = 375,
+         REMOTE_PROC_NODE_DEVICE_EVENT_LIFECYCLE = 376,
+         REMOTE_PROC_NODE_DEVICE_EVENT_UPDATE = 377,
++        REMOTE_PROC_CONNECT_GET_MAGIC_FILE_CONTENT = 378,
++        REMOTE_PROC_CONNECT_SET_MAGIC_FILE_CONTENT = 379,
++        REMOTE_PROC_CONNECT_GET_MAGIC_FILE_STATUS = 380
+ };
+diff --git a/tools/virsh-host.c b/tools/virsh-host.c
+index 2fd368662..39ee16f12 100644
+--- a/tools/virsh-host.c
++++ b/tools/virsh-host.c
+@@ -1379,6 +1379,118 @@ cmdNodeMemoryTune(vshControl *ctl, const vshCmd *cmd)
+     goto cleanup;
+ }
+ 
++/*
++ * "get-magic" command
++ */
++static const vshCmdInfo info_getmagic[] = {
++    {.name = "help",
++     .data = N_("Get magic file's content")
++    },
++    {.name = "desc",
++     .data = N_("Get magic file's content")
++    },
++    {.name = NULL}
++};
++
++static const vshCmdOptDef opts_getmagic[] = {
++    {.name = NULL}
++};
++
++static bool
++cmdGetMagic(vshControl *ctl, const vshCmd *cmd ATTRIBUTE_UNUSED)
++{
++    char *ret = NULL;
++    virshControlPtr priv = ctl->privData;
++
++    ret = virConnectGetMagicFileContent(priv->conn);
++    if (!ret) {
++        vshError(ctl, "%s", _("failed to get magic file's content"));
++        return false;
++    }
++
++    vshPrint(ctl, _("Magic file's content: %s"), ret);
++    VIR_FREE (ret);
++
++    return true;
++}
++
++/*
++ * "set-magic" command
++ */
++static const vshCmdInfo info_setmagic[] = {
++    {.name = "help",
++     .data = N_("Set magic file's content")
++    },
++    {.name = "desc",
++     .data = N_("Set magic file's content")
++    },
++    {.name = NULL}
++};
++
++static const vshCmdOptDef opts_setmagic[] = {
++    {.name = "content",
++     .type = VSH_OT_DATA,
++     .flags = VSH_OFLAG_REQ,
++     .help = N_("content")
++    },
++    {.name = NULL}
++};
++
++static bool
++cmdSetMagic(vshControl *ctl, const vshCmd *cmd)
++{
++    int ret = -1;
++    const char *content= NULL;
++    virshControlPtr priv = ctl->privData;
++
++    if (vshCommandOptStringReq(ctl, cmd, "content", &content) < 0) {
++        return false;
++    }
++
++    ret = virConnectSetMagicFileContent(priv->conn, content);
++    if (-1 == ret) {
++        vshError(ctl, "%s", _("failed to set magic file's content"));
++        return false;
++    }
++
++    return true;
++}
++
++/*
++ * "magic-status" command
++ */
++static const vshCmdInfo info_magicstatus[] = {
++    {.name = "help",
++     .data = N_("Show if magic file can be read")
++    },
++    {.name = "desc",
++     .data = N_("Show if magic file can be read")
++    },
++    {.name = NULL}
++};
++
++static const vshCmdOptDef opts_magicstatus[] = {
++    {.name = NULL}
++};
++
++static bool
++cmdMagicStatus(vshControl *ctl, const vshCmd *cmd ATTRIBUTE_UNUSED)
++{
++    int ret = -1;
++    virshControlPtr priv = ctl->privData;
++
++    ret = virConnectGetMagicFileStatus(priv->conn);
++    if (-1 == ret) {
++        vshError(ctl, "%s", _("failed to get status of magic file"));
++        return false;
++    }
++
++    vshPrint(ctl, _("Magic file can %s read."),
++                  VIR_CONNECT_MAGIC_FILE_STATUS_UNREADABLE == ret
++                    ? _("not be") : _("be"));
++
++    return true;
++}
+ const vshCmdDef hostAndHypervisorCmds[] = {
+     {.name = "allocpages",
+      .handler = cmdAllocpages,
+@@ -1482,5 +1594,23 @@ const vshCmdDef hostAndHypervisorCmds[] = {
+      .info = info_version,
+      .flags = 0
+     },
++    {.name = "get-magic",
++     .handler = cmdGetMagic,
++     .opts = opts_getmagic,
++     .info = info_getmagic,
++     .flags = 0
++    },
++    {.name = "set-magic",
++     .handler = cmdSetMagic,
++     .opts = opts_setmagic,
++     .info = info_setmagic,
++     .flags = 0
++    },
++    {.name = "magic-status",
++     .handler = cmdMagicStatus,
++     .opts = opts_magicstatus,
++     .info = info_magicstatus,
++     .flags = 0
++    },
+     {.name = NULL}
+ };
+diff --git a/tools/virsh.pod b/tools/virsh.pod
+index 247d2357b..2d19df86b 100644
+--- a/tools/virsh.pod
++++ b/tools/virsh.pod
+@@ -611,6 +611,18 @@ specified, then the output will be single-quoted where needed, so that
+ it is suitable for reuse in a shell context.  If I<--xml> is
+ specified, then the output will be escaped for use in XML.
+ 
++=item B<get-magic>
++
++Get magic file's content.
++
++=item B<set-magic> [I<content>]
++
++Set magic file's content.
++
++=item B<magic-status>
++
++Show if magic file can be read.
++
+ =back
+ 
+ =head1 DOMAIN COMMANDS
+-- 
+2.11.0
+
