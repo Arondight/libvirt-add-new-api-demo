@@ -2,7 +2,7 @@
 
 ## ABOUT
 
-This patch is an example to add new APIs in [LibVirt][LIBVIRT-WEBSITE], also add entries in `virsh`. I implement qemu driver only but others is the same.
+This patch is an example to add new APIs in [LibVirt][LIBVIRT-WEBSITE], also add entries in `virsh`. I implement qemu driver only but others are the same.
 
 [LIBVIRT-WEBSITE]: http://libvirt.org "Visit website of LibVirt"
 
@@ -19,6 +19,7 @@ git checkout v2.5.0
 git am $LIBVIRT_PATCH
 ./autogen.sh
 make -j8
+make check -j8
 ```
 
 ## SYNOPSIS

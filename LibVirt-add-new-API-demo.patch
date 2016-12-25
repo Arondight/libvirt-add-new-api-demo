@@ -1,10 +1,10 @@
-From b5c16ee87ffe63c55655872ab9c5f5c26d415be3 Mon Sep 17 00:00:00 2001
+From 42e5859878233470bdac4060a23db1232e45fddd Mon Sep 17 00:00:00 2001
 From: Arondight <shell_way@foxmail.com>
-Date: Sun, 18 Dec 2016 01:26:30 +0800
+Date: Sun, 25 Dec 2016 16:07:58 +0800
 Subject: [PATCH] LibVirt add new API demo
 
 This patch is an example to add new APIs in LibVirt, also add entries in
-virsh. I implement qemu driver only but others is the same.
+virsh. I implement qemu driver only but others are the same.
 
 * include/libvirt/libvirt-host.h (virConnectGetMagicFileContent)
 (virConnectSetMagicFileContent, virConnectGetMagicFileStatus):
@@ -54,14 +54,14 @@ Documents for new commands.
  src/libvirt_public.syms        |   7 +++
  src/qemu/qemu_capabilities.c   |  92 +++++++++++++++++++++++++++++
  src/qemu/qemu_capabilities.h   |   6 ++
- src/qemu/qemu_driver.c         |  66 +++++++++++++++++++++
+ src/qemu/qemu_driver.c         |  78 +++++++++++++++++++++++++
  src/qemu/qemu_process.c        |  17 ++++++
  src/remote/remote_driver.c     |   3 +
  src/remote/remote_protocol.x   |  38 +++++++++++-
  src/remote_protocol-structs    |  15 +++++
  tools/virsh-host.c             | 130 +++++++++++++++++++++++++++++++++++++++++
  tools/virsh.pod                |  12 ++++
- 13 files changed, 532 insertions(+), 1 deletion(-)
+ 13 files changed, 544 insertions(+), 1 deletion(-)
 
 diff --git a/include/libvirt/libvirt-host.h b/include/libvirt/libvirt-host.h
 index 07b5d1594..683fec5d5 100644
@@ -378,10 +378,10 @@ index ee4bbb329..d9d1cbd73 100644
 +
  #endif /* __QEMU_CAPABILITIES_H__*/
 diff --git a/src/qemu/qemu_driver.c b/src/qemu/qemu_driver.c
-index 3517aa2be..764e74d27 100644
+index 3517aa2be..706d33c6d 100644
 --- a/src/qemu/qemu_driver.c
 +++ b/src/qemu/qemu_driver.c
-@@ -20273,6 +20273,69 @@ qemuDomainSetGuestVcpus(virDomainPtr dom,
+@@ -20273,6 +20273,81 @@ qemuDomainSetGuestVcpus(virDomainPtr dom,
  }
  
  
@@ -391,6 +391,10 @@ index 3517aa2be..764e74d27 100644
 +    virQEMUDriverPtr driver = conn->privateData;
 +    char *ret = NULL;
 +    virCapsPtr caps = NULL;
++
++    if (virConnectGetMagicFileContentEnsureACL (conn) < 0) {
++        return NULL;
++    }
 +
 +    if (!(caps = virQEMUDriverGetCapabilities(driver, false))) {
 +        goto cleanup;
@@ -413,6 +417,10 @@ index 3517aa2be..764e74d27 100644
 +    int ret = -1;
 +    virCapsPtr caps = NULL;
 +
++    if (virConnectSetMagicFileContentEnsureACL (conn) < 0) {
++        return -1;
++    }
++
 +    if (!(caps = virQEMUDriverGetCapabilities(driver, false))) {
 +        goto cleanup;
 +    }
@@ -434,6 +442,10 @@ index 3517aa2be..764e74d27 100644
 +    int ret = -1;
 +    virCapsPtr caps = NULL;
 +
++    if (virConnectGetMagicFileStatusEnsureACL (conn) < 0) {
++        return -1;
++    }
++
 +    if (!(caps = virQEMUDriverGetCapabilities(driver, false))) {
 +        goto cleanup;
 +    }
@@ -451,7 +463,7 @@ index 3517aa2be..764e74d27 100644
  static virHypervisorDriver qemuHypervisorDriver = {
      .name = QEMU_DRIVER_NAME,
      .connectOpen = qemuConnectOpen, /* 0.2.0 */
-@@ -20486,6 +20549,9 @@ static virHypervisorDriver qemuHypervisorDriver = {
+@@ -20486,6 +20561,9 @@ static virHypervisorDriver qemuHypervisorDriver = {
      .domainMigrateStartPostCopy = qemuDomainMigrateStartPostCopy, /* 1.3.3 */
      .domainGetGuestVcpus = qemuDomainGetGuestVcpus, /* 2.0.0 */
      .domainSetGuestVcpus = qemuDomainSetGuestVcpus, /* 2.0.0 */
@@ -607,7 +619,7 @@ index b71accc07..e4031a531 100644
 +        REMOTE_PROC_CONNECT_GET_MAGIC_FILE_STATUS = 380
  };
 diff --git a/tools/virsh-host.c b/tools/virsh-host.c
-index 2fd368662..39ee16f12 100644
+index 2fd368662..d4ebc1d85 100644
 --- a/tools/virsh-host.c
 +++ b/tools/virsh-host.c
 @@ -1379,6 +1379,118 @@ cmdNodeMemoryTune(vshControl *ctl, const vshCmd *cmd)
